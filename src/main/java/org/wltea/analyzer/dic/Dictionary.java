@@ -33,6 +33,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
+import java.sql.*;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -81,6 +82,7 @@ public class Dictionary {
 	private static final Logger logger = ESLoggerFactory.getLogger(Monitor.class.getName());
 
 	private static ScheduledExecutorService pool = Executors.newScheduledThreadPool(1);
+	private static ScheduledExecutorService hotDicReloadPool = Executors.newScheduledThreadPool(1);
 
 	public static final String PATH_DIC_MAIN = "main.dic";
 	public static final String PATH_DIC_SURNAME = "surname.dic";
@@ -154,6 +156,11 @@ public class Dictionary {
 					singleton.loadSuffixDict();
 					singleton.loadPrepDict();
 					singleton.loadStopWordDict();
+
+					hotDicReloadPool.scheduleAtFixedRate(() -> {
+						logger.info("[==========]reload hot dict from mysql......");
+						Dictionary.getSingleton().reLoadMainDict();
+					}, 10, 30, TimeUnit.SECONDS);
 
 					if(cfg.isEnableRemoteDict()){
 						// 建立监控线程
@@ -378,6 +385,8 @@ public class Dictionary {
 		this.loadExtDict();
 		// 加载远程自定义词库
 		this.loadRemoteExtDict();
+		// 从mysql加载词典
+		this.loadMySQLExtDict();
 	}
 
 	/**
@@ -761,4 +770,73 @@ public class Dictionary {
 		logger.info("重新加载词典完毕...");
 	}
 
+	private static Properties prop = new Properties();
+
+	static {
+		try {
+			Class.forName("com.mysql.jdbc.Driver");
+		} catch (ClassNotFoundException e) {
+			logger.error("error", e);
+		}
+	}
+
+	/**
+	 * 从mysql加载热更新词典
+	 */
+	private void loadMySQLExtDict() {
+		Connection conn = null;
+		Statement stmt = null;
+		ResultSet rs = null;
+
+		try {
+			Path file = PathUtils.get(getDictRoot(), "jdbc-reload.properties");
+			prop.load(new FileInputStream(file.toFile()));
+
+			logger.info("[==========]jdbc-reload.properties");
+			for(Object key : prop.keySet()) {
+				logger.info("[==========]" + key + "=" + prop.getProperty(String.valueOf(key)));
+			}
+
+			logger.info("[==========]query hot dict from mysql, " + prop.getProperty("jdbc.reload.sql") + "......");
+
+			conn = DriverManager.getConnection(
+					prop.getProperty("jdbc.url"),
+					prop.getProperty("jdbc.user"),
+					prop.getProperty("jdbc.password"));
+			stmt = conn.createStatement();
+			rs = stmt.executeQuery(prop.getProperty("jdbc.reload.sql"));
+
+			while(rs.next()) {
+				String theWord = rs.getString("word");
+				logger.info("[==========]hot word from mysql: " + theWord);
+				_MainDict.fillSegment(theWord.trim().toCharArray());
+			}
+
+			Thread.sleep(Integer.valueOf(String.valueOf(prop.get("jdbc.reload.interval"))));
+		} catch (Exception e) {
+			logger.error("erorr", e);
+		} finally {
+			if(rs != null) {
+				try {
+					rs.close();
+				} catch (SQLException e) {
+					logger.error("error", e);
+				}
+			}
+			if(stmt != null) {
+				try {
+					stmt.close();
+				} catch (SQLException e) {
+					logger.error("error", e);
+				}
+			}
+			if(conn != null) {
+				try {
+					conn.close();
+				} catch (SQLException e) {
+					logger.error("error", e);
+				}
+			}
+		}
+	}
 }
