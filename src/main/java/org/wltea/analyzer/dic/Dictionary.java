@@ -25,31 +25,26 @@
  */
 package org.wltea.analyzer.dic;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.file.Path;
-import java.sql.*;
-import java.util.*;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
 import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.logging.ESLoggerFactory;
 import org.elasticsearch.plugin.analysis.ik.AnalysisIkPlugin;
 import org.wltea.analyzer.cfg.Configuration;
-import org.apache.logging.log4j.Logger;
+
+import java.io.*;
+import java.nio.file.Path;
+import java.sql.*;
+import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 
 /**
@@ -157,10 +152,10 @@ public class Dictionary {
 					singleton.loadPrepDict();
 					singleton.loadStopWordDict();
 
-					hotDicReloadPool.scheduleAtFixedRate(() -> {
+					ScheduledFuture<?> scheduledFuture = hotDicReloadPool.scheduleAtFixedRate(() -> {
 						logger.info("[==========]reload hot dict from mysql......");
 						Dictionary.getSingleton().reLoadMainDict();
-					}, 10, 30, TimeUnit.SECONDS);
+					}, 10, 120, TimeUnit.SECONDS);
 
 					if(cfg.isEnableRemoteDict()){
 						// 建立监控线程
@@ -774,8 +769,8 @@ public class Dictionary {
 
 	static {
 		try {
-			Class.forName("com.mysql.jdbc.Driver");
-		} catch (ClassNotFoundException e) {
+			Class.forName("com.mysql.cj.jdbc.Driver");
+		} catch (Exception e) {
 			logger.error("error", e);
 		}
 	}
@@ -811,8 +806,6 @@ public class Dictionary {
 				logger.info("[==========]hot word from mysql: " + theWord);
 				_MainDict.fillSegment(theWord.trim().toCharArray());
 			}
-
-			Thread.sleep(Integer.valueOf(String.valueOf(prop.get("jdbc.reload.interval"))));
 		} catch (Exception e) {
 			logger.error("erorr", e);
 		} finally {
